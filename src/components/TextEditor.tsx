@@ -11,7 +11,18 @@ interface TextEditorProps {
 }
 
 export const TextEditor = ({ chapters, currentChapterId, onContentChange, analysisIssues = [] }: TextEditorProps) => {
-  const currentChapter = chapters.find(c => c.id === currentChapterId);
+  const findChapter = (chapters: Chapter[], id: string): Chapter | undefined => {
+    for (const chapter of chapters) {
+      if (chapter.id === id) return chapter;
+      if (chapter.subchapters) {
+        const found = findChapter(chapter.subchapters, id);
+        if (found) return found;
+      }
+    }
+    return undefined;
+  };
+
+  const currentChapter = findChapter(chapters, currentChapterId);
   const [content, setContent] = useState(currentChapter?.content || '');
 
   useEffect(() => {

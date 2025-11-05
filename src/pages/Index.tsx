@@ -1,11 +1,14 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { StartScreen } from "@/components/StartScreen";
 import { EditorNavbar } from "@/components/EditorNavbar";
 import { TextEditor } from "@/components/TextEditor";
 import { Sidebar } from "@/components/Sidebar";
 import { ReadingMode } from "@/components/ReadingMode";
-import { Project, Chapter, Character, Location, AnalysisIssue } from "@/types/project";
+import { ChapterNavigation } from "@/components/ChapterNavigation";
+import { Project, Chapter, AnalysisIssue, Character, Location } from "@/types/project";
 import { useToast } from "@/hooks/use-toast";
+import { saveProject, getAllProjects, getProject, deleteProject } from "@/lib/projectStorage";
+import { supabase } from "@/integrations/supabase/client";
 
 const Index = () => {
   const { toast } = useToast();
@@ -13,14 +16,17 @@ const Index = () => {
   const [currentChapterId, setCurrentChapterId] = useState<string>('');
   const [isReadMode, setIsReadMode] = useState(false);
 
-  // Mock recent projects
-  const recentProjects = [
-    {
-      id: '1',
-      title: 'Die vergessene Stadt',
-      lastModified: new Date('2025-01-10')
-    }
-  ];
+  const [recentProjects, setRecentProjects] = useState<Array<{ id: string; title: string; lastModified: Date }>>([]);
+
+  useEffect(() => {
+    const projects = getAllProjects();
+    setRecentProjects(
+      projects
+        .sort((a, b) => b.lastModified.getTime() - a.lastModified.getTime())
+        .slice(0, 5)
+        .map(p => ({ id: p.id, title: p.title, lastModified: p.lastModified }))
+    );
+  }, [currentProject]);
 
   // Mock characters
   const mockCharacters: Character[] = [
@@ -114,66 +120,124 @@ const Index = () => {
   };
 
   const handleOpenProject = (projectId: string) => {
-    // Mock: Load a demo project with content
-    const demoChapter: Chapter = {
-      id: '1',
-      title: 'Die Entdeckung',
-      content: 'Emma Schneider betrat das alte Archiv zum ersten Mal an einem nebligen Novembermorgen. Die schwere Eichentür quietschte, als sie sie öffnete, und der Geruch von altem Papier und Staub schlug ihr entgegen.\n\nDr. Heinrich Weber, der Archivar, erwartete sie bereits zwischen den hohen Regalen. Seine grünen Augen funkelten hinter der Brille, als er sie begrüßte...',
-      order: 1
-    };
+    const project = getProject(projectId);
+    
+    if (project) {
+      setCurrentProject(project);
+      setCurrentChapterId(project.chapters[0]?.id || '');
+      toast({
+        title: "Projekt geladen",
+        description: `"${project.title}" wurde erfolgreich geöffnet.`
+      });
+    } else {
+      toast({
+        title: "Fehler",
+        description: "Projekt konnte nicht gefunden werden.",
+        variant: "destructive"
+      });
+    }
+  };
 
-    const demoProject: Project = {
-      id: projectId,
-      title: 'Die vergessene Stadt',
-      chapters: [demoChapter],
-      characters: mockCharacters,
-      locations: mockLocations,
-      analysisIssues: mockIssues,
-      created: new Date('2025-01-01'),
-      lastModified: new Date()
-    };
-
-    setCurrentProject(demoProject);
-    setCurrentChapterId(demoChapter.id);
-    toast({
-      title: "Projekt geladen",
-      description: "Ihr Projekt wurde erfolgreich geöffnet."
-    });
+  const handleDeleteProject = (projectId: string) => {
+    try {
+      deleteProject(projectId);
+      if (currentProject?.id === projectId) {
+        setCurrentProject(null);
+      }
+      toast({
+        title: "Projekt gelöscht",
+        description: "Das Projekt wurde erfolgreich entfernt."
+      });
+    } catch (error) {
+      toast({
+        title: "Fehler",
+        description: "Projekt konnte nicht gelöscht werden.",
+        variant: "destructive"
+      });
+    }
   };
 
   const handleContentChange = (chapterId: string, content: string) => {
     if (!currentProject) return;
 
-    const updatedChapters = currentProject.chapters.map(chapter =>
-      chapter.id === chapterId ? { ...chapter, content } : chapter
-    );
+    const updateChapter = (chapters: Chapter[]): Chapter[] => {
+      return chapters.map(chapter => {
+        if (chapter.id === chapterId) {
+          return { ...chapter, content };
+        }
+        if (chapter.subchapters) {
+          return { ...chapter, subchapters: updateChapter(chapter.subchapters) };
+        }
+        return chapter;
+      });
+    };
 
-    setCurrentProject({
+    const updatedProject = {
       ...currentProject,
-      chapters: updatedChapters,
+      chapters: updateChapter(currentProject.chapters),
       lastModified: new Date()
-    });
+    };
+
+    setCurrentProject(updatedProject);
+    saveProject(updatedProject);
   };
 
-  const handleAnalyze = () => {
+  const handleAnalyze = async () => {
+    if (!currentProject) return;
+
     toast({
       title: "Textanalyse gestartet",
       description: "Die KI analysiert Ihren Text auf Inkonsistenzen und Fehler..."
     });
-    
-    // In a real implementation, this would call an AI service
-    setTimeout(() => {
-      if (currentProject) {
-        setCurrentProject({
-          ...currentProject,
-          analysisIssues: mockIssues
-        });
+
+    try {
+      // Combine all text from all chapters
+      const getAllText = (chapters: Chapter[]): string => {
+        return chapters.map(ch => {
+          const text = ch.content || '';
+          const subText = ch.subchapters ? getAllText(ch.subchapters) : '';
+          return text + '\n' + subText;
+        }).join('\n');
+      };
+
+      const fullText = getAllText(currentProject.chapters);
+
+      const { data, error } = await supabase.functions.invoke('analyze-text', {
+        body: {
+          text: fullText,
+          characters: currentProject.characters,
+          locations: currentProject.locations
+        }
+      });
+
+      if (error) {
+        console.error("Analysis error:", error);
+        throw error;
       }
+
+      const issues = data?.issues || [];
+      
+      const updatedProject = {
+        ...currentProject,
+        analysisIssues: issues,
+        lastModified: new Date()
+      };
+
+      setCurrentProject(updatedProject);
+      saveProject(updatedProject);
+
       toast({
         title: "Analyse abgeschlossen",
-        description: `${mockIssues.length} Hinweise gefunden. Prüfen Sie die Seitenleiste.`
+        description: `${issues.length} Hinweise gefunden.`
       });
-    }, 2000);
+    } catch (error) {
+      console.error("Error analyzing text:", error);
+      toast({
+        title: "Fehler",
+        description: "Textanalyse fehlgeschlagen. Bitte versuchen Sie es erneut.",
+        variant: "destructive"
+      });
+    }
   };
 
   const handleAISuggestion = () => {
@@ -221,10 +285,14 @@ const Index = () => {
   const handleDeleteIssue = (issueId: string) => {
     if (!currentProject) return;
 
-    setCurrentProject({
+    const updatedProject = {
       ...currentProject,
-      analysisIssues: currentProject.analysisIssues.filter(i => i.id !== issueId)
-    });
+      analysisIssues: currentProject.analysisIssues.filter(i => i.id !== issueId),
+      lastModified: new Date()
+    };
+
+    setCurrentProject(updatedProject);
+    saveProject(updatedProject);
 
     toast({
       title: "Hinweis entfernt",
@@ -237,6 +305,7 @@ const Index = () => {
       <StartScreen
         onNewProject={handleNewProject}
         onOpenProject={handleOpenProject}
+        onDeleteProject={handleDeleteProject}
         recentProjects={recentProjects}
       />
     );
@@ -257,13 +326,20 @@ const Index = () => {
       
       <div className="flex flex-1 overflow-hidden">
         {!isReadMode && (
-          <Sidebar
-            characters={currentProject.characters}
-            locations={currentProject.locations}
-            analysisIssues={currentProject.analysisIssues}
-            onIssueClick={handleIssueClick}
-            onDeleteIssue={handleDeleteIssue}
-          />
+          <>
+            <ChapterNavigation
+              chapters={currentProject.chapters}
+              currentChapterId={currentChapterId}
+              onChapterSelect={setCurrentChapterId}
+            />
+            <Sidebar
+              characters={currentProject.characters}
+              locations={currentProject.locations}
+              analysisIssues={currentProject.analysisIssues}
+              onIssueClick={handleIssueClick}
+              onDeleteIssue={handleDeleteIssue}
+            />
+          </>
         )}
         
         <div className="flex-1 overflow-hidden p-4">

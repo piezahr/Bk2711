@@ -1,14 +1,15 @@
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
-import { BookOpen, Plus, FolderOpen } from "lucide-react";
+import { BookOpen, Plus, FolderOpen, Trash2 } from "lucide-react";
 
 interface StartScreenProps {
   onNewProject: () => void;
   onOpenProject: (projectId: string) => void;
+  onDeleteProject: (projectId: string) => void;
   recentProjects: Array<{ id: string; title: string; lastModified: Date }>;
 }
 
-export const StartScreen = ({ onNewProject, onOpenProject, recentProjects }: StartScreenProps) => {
+export const StartScreen = ({ onNewProject, onOpenProject, onDeleteProject, recentProjects }: StartScreenProps) => {
   return (
     <div className="min-h-screen bg-gradient-to-br from-background via-secondary/20 to-background flex items-center justify-center p-8">
       <div className="max-w-4xl w-full space-y-8">
@@ -61,10 +62,21 @@ export const StartScreen = ({ onNewProject, onOpenProject, recentProjects }: Sta
               {recentProjects.map((project) => (
                 <Card
                   key={project.id}
-                  className="p-4 hover:shadow-md transition-all cursor-pointer hover:border-primary"
+                  className="p-4 hover:shadow-md transition-all cursor-pointer hover:border-primary group relative"
                   onClick={() => onOpenProject(project.id)}
                 >
-                  <div className="flex items-center justify-between">
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    className="absolute top-2 right-2 h-8 w-8 opacity-0 group-hover:opacity-100 transition-opacity"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onDeleteProject(project.id);
+                    }}
+                  >
+                    <Trash2 className="h-4 w-4" />
+                  </Button>
+                  <div className="flex items-center justify-between pr-8">
                     <div className="flex items-center gap-3">
                       <BookOpen className="h-5 w-5 text-primary" />
                       <div>
